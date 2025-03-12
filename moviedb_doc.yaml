@@ -1,0 +1,59 @@
+openapi: 3.0.0
+info:
+  title: E-commerce Affiliate API
+  version: 1.0.0
+  description: API for accessing e-commerce affiliate information
+servers:
+  - url: https://affiliate-api.amazon.com
+  - url: https://api.bolplaza.com
+paths:
+  /search:
+    get:
+      summary: Search for items
+      description: Find items based on a text query
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Text query to search for items
+          schema:
+            type: string
+        - name: api_key
+          in: query
+          required: true
+          description: Your affiliate API key
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the item
+        title:
+          type: string
+          description: Item title
+        description:
+          type: string
+          description: Item description/summary
+        price:
+          type: number
+          format: float
+          description: Item price
+        affiliate_link:
+          type: string
+          description: Affiliate link for the item
