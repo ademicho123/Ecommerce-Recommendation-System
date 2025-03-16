@@ -1,17 +1,18 @@
 import os
 import yaml
+import time
 import requests
 from langchain.chains.api.base import APIChain
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-from config import OPENAI_API_KEY, AMAZON_AFFILIATE_API_KEY, BOL_PLAZA_API_KEY
+from config import OPENAI_API_KEY, APIFY_API_KEY
 
 # Initialize OpenAI Model
 llm = ChatOpenAI(openai_api_key=OPENAI_API_KEY)
 
 # Load OpenAPI spec from YAML file
 def load_api_docs():
-    yaml_path = os.path.join(os.path.dirname(__file__), 'ecommerce_doc.yaml')
+    yaml_path = os.path.join(os.path.dirname(__file__), 'doc.yaml')
     with open(yaml_path, 'r') as file:
         spec = yaml.safe_load(file)
     
@@ -40,7 +41,7 @@ def load_api_docs():
 item_api_prompt = PromptTemplate(
     input_variables=["query", "api_docs"],
     template="""
-    You are an AI assistant that helps users find items using e-commerce affiliate APIs.
+    You are an AI assistant that helps users find items using the Apify Amazon Bestsellers Scraper API.
     Based on the user's request, determine which API endpoint to use and how to format the request.
     
     User Request: {query}
@@ -97,39 +98,136 @@ def extract_keywords(user_query):
     
     return cleaned_query
 
-def search_amazon(query):
-    """Search for items on Amazon using the affiliate API."""
-    url = f"https://affiliate-api.amazon.com/search?query={query}&api_key={AMAZON_AFFILIATE_API_KEY}"
-    response = requests.get(url)
-    return response.json()
-
-def search_bol_plaza(query):
-    """Search for items on Bol Plaza using the affiliate API."""
-    url = f"https://api.bolplaza.com/search?query={query}&api_key={BOL_PLAZA_API_KEY}"
-    response = requests.get(url)
-    return response.json()
+def search_amazon_products(query):
+    """Search for products on Amazon using the Apify Amazon Product Scraper API."""
+    # Start a new run
+    run_url = "https://api.apify.com/v2/acts/junglee~amazon-bestsellers/runs"
+    
+    # Map query to appropriate category URL
+    category_mapping = {
+        "electronics": "https://www.amazon.com/Best-Sellers-Electronics/zgbs/electronics",
+        "books": "https://www.amazon.com/best-sellers-books-Amazon/zgbs/books",
+        "toys": "https://www.amazon.com/Best-Sellers-Toys-Games/zgbs/toys-and-games",
+        "games": "https://www.amazon.com/Best-Sellers-Toys-Games/zgbs/toys-and-games",
+        "kitchen": "https://www.amazon.com/Best-Sellers-Kitchen-Dining/zgbs/kitchen",
+        "home": "https://www.amazon.com/Best-Sellers-Home-Kitchen/zgbs/home-garden",
+        "beauty": "https://www.amazon.com/Best-Sellers-Beauty/zgbs/beauty",
+        "clothing": "https://www.amazon.com/Best-Sellers-Clothing-Shoes-Jewelry/zgbs/fashion",
+        "sports": "https://www.amazon.com/Best-Sellers-Sports-Outdoors/zgbs/sporting-goods",
+        "fitness": "https://www.amazon.com/Best-Sellers-Sports-Outdoors/zgbs/sporting-goods",
+        "office": "https://www.amazon.com/Best-Sellers-Office-Products/zgbs/office-products"
+    }
+    
+    category_url = category_mapping.get(query.lower(), "https://www.amazon.com/Best-Sellers-Electronics/zgbs/electronics")
+    
+    payload = {
+        "token": APIFY_API_KEY
+    }
+    
+    json_data = {
+        "categoryUrls": [category_url],
+        "maxItems": 10  # Limit to 10 items to save costs
+    }
+    
+    # Start the run
+    response = requests.post(run_url, params=payload, json=json_data)
+    
+    if response.status_code != 201:
+        print(f"Failed to start actor run: {response.status_code}")
+        print(f"Response: {response.text}")
+        return []
+    
+    # Extract run ID and dataset ID
+    run_data = response.json().get("data", {})
+    run_id = run_data.get("id")
+    dataset_id = run_data.get("defaultDatasetId")
+    
+    if not run_id or not dataset_id:
+        print("Missing run ID or dataset ID")
+        return []
+    
+    print(f"Run started with ID: {run_id}")
+    print(f"Dataset ID: {dataset_id}")
+    
+    # Poll for run status
+    status_url = f"https://api.apify.com/v2/actor-runs/{run_id}"
+    max_attempts = 30  # Adjust based on expected run time
+    
+    print("Waiting for run to complete...")
+    for attempt in range(max_attempts):
+        time.sleep(5)  # Wait 5 seconds between status checks
+        
+        status_response = requests.get(status_url, params=payload)
+        if status_response.status_code != 200:
+            print(f"Failed to get run status: {status_response.status_code}")
+            continue
+        
+        status_data = status_response.json().get("data", {})
+        status = status_data.get("status")
+        
+        print(f"Run status: {status} (attempt {attempt+1}/{max_attempts})")
+        
+        if status == "SUCCEEDED":
+            print("Run completed successfully!")
+            break
+        elif status in ["FAILED", "ABORTED", "TIMED-OUT"]:
+            print(f"Run failed with status: {status}")
+            return []
+    else:
+        print("Timed out waiting for run to complete")
+        return []
+    
+    # Get dataset items
+    dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items"
+    dataset_response = requests.get(dataset_url, params=payload)
+    
+    if dataset_response.status_code != 200:
+        print(f"Failed to get dataset items: {dataset_response.status_code}")
+        print(f"Response: {dataset_response.text}")
+        return []
+    
+    items = dataset_response.json()
+    print(f"Retrieved {len(items)} items from dataset")
+    
+    return items
 
 def process_item_request(user_query):
     """
-    Process user's item request through the LLM and API Chain.
-    This lets the LLM determine which endpoint to use based on understanding the query.
+    Process user's item request through the Apify API.
     """
     try:
         # Extract keywords from the user query
         search_term = extract_keywords(user_query)
         print(f"Searching for: {search_term}")
         
-        # Search both Amazon and Bol Plaza
-        amazon_response = search_amazon(search_term)
-        bol_plaza_response = search_bol_plaza(search_term)
+        # Search Amazon products using the Apify API
+        items = search_amazon_products(search_term)
         
-        # Combine results
-        combined_results = {
-            "results": (amazon_response.get("results", []) + bol_plaza_response.get("results", []))[:5]
-        }
+        # Format the items into a standardized structure
+        formatted_results = []
         
-        return combined_results
+        for item in items:
+            # Skip items with missing essential data
+            if not item.get('name'):
+                continue
+                
+            # Extract price (handle different formats)
+            price = item.get('price', 'Price not available')
+            
+            formatted_item = {
+                'title': item.get('name', 'Unknown'),
+                'price': price,
+                'url': item.get('url', ''),
+                'rating': item.get('stars', 'No rating'),
+                'reviews': item.get('reviewsCount', 'No reviews'),
+                'category': item.get('categoryName', 'Unknown category')
+            }
+            formatted_results.append(formatted_item)
+        
+        return {"results": formatted_results}
         
     except Exception as e:
         print(f"Error processing request: {e}")
+        import traceback
+        traceback.print_exc()
         return {"results": []}

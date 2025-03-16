@@ -9,12 +9,21 @@ def main():
     print("Welcome to the AI E-commerce Recommender!")
     user_query = input("What kind of item are you looking for? ")
     
+    # Clean up the user input
+    user_query = user_query.strip()
+    
     # Get raw API response
     api_response = process_item_request(user_query)
     
-    # Check if the API response is valid
-    if not api_response or "results" not in api_response:
+    # Add more detailed error handling
+    if not api_response:
+        print("\nSorry, there was an error processing your request.")
+        return
+    
+    if "results" not in api_response or not api_response["results"]:
         print("\nSorry, we couldn't find any items matching your request.")
+        print("Try being more specific or using different keywords.")
+        print("Available categories: electronics, books, toys, games, kitchen, home, beauty, clothing, sports, fitness, office")
         return
     
     # Use LLM to format the response in a user-friendly way
@@ -28,9 +37,9 @@ def main():
         For each item, include:
         - Title and price
         - A brief description (if available)
-        - Affiliate link (if available)
+        - URL link to the item on Amazon
         
-        Limit to the top 5 most relevant items.
+        Limit to the top 10 most relevant items. If no items are found, suggest alternatives.
         """
     )
     
